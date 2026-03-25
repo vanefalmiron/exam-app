@@ -3,60 +3,87 @@ import re
 
 def parse_exam(file):
     doc = Document(file)
+    MARKER_RE = re.compile(r'(Pregunta\s+\d+\s+Respuesta)')
 
-    # Aplanar el documento en líneas individuales, dividiendo párrafos
-    # que mezclan varias opciones o tienen saltos de línea internos
-    lines = []  # lista de (texto, is_bold)
-
+    # Convertir todo el documento en tokens (texto, is_bold)
+    tokens = []
     for para in doc.paragraphs:
-        raw = para.text.strip()
-        if not raw:
+        raw = para.text
+        if not raw.strip():
             continue
-
         is_bold = any(r.bold for r in para.runs if r.text.strip())
 
-        # Dividir por saltos de línea internos
-        parts = raw.split('\n')
+        # Separar el marcador "Pregunta X Respuesta" del texto pegado a él
+        parts = MARKER_RE.split(raw)
         for part in parts:
             part = part.strip()
             if not part:
                 continue
-            # Subdividir si hay varias opciones en la misma línea: "A. texto B. texto"
-            subparts = re.split(r'(?<!\A)(?=[A-D]\. )', part)
-            for sp in subparts:
-                sp = sp.strip()
-                if sp:
-                    lines.append((sp, is_bold))
+            for line in part.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # Separar opciones pegadas en la misma línea (ej: "A. xxx B. yyy")
+                subparts = re.split(r'(?<!\A)(?=[A-D]\. )', line)
+                for sp in subparts:
+                    sp = sp.strip()
+                    if sp:
+                        tokens.append((sp, is_bold))
 
-    # Parsear las líneas
+    # Parsear tokens
     questions = []
     current_q = None
 
-    for text, is_bold in lines:
-        starts_with_option = bool(re.match(r'^[A-Da-d][.\s]', text))
-        is_skip = text.startswith("Pregunta ") and "Respuesta" in text
-        is_unit = text.lower().startswith("unidad ")
+    for text, is_bold in tokens:
+        starts_option  = bool(re.match(r'^[A-D][.\s]', text))
+        is_marker      = bool(re.match(r'^Pregunta\s+\d+\s+Respuesta$', text))
+        is_unit        = text.lower().startswith("unidad ")
+        is_correcta    = text.lower().startswith("respuesta correcta")
 
-        if is_unit:
+        # Ignorar encabezados de unidad y el marcador (ya cumplió su función al separar)
+        if is_unit or is_marker:
             continue
 
-        if is_skip:
-            if current_q and current_q["correcta"]:
-                questions.append(current_q)
-            current_q = None
+        # Línea explícita "Respuesta correcta: X. texto"
+        if is_correcta and current_q:
+            m = re.search(r'[Rr]espuesta correcta[:\s]+(.+)', text)
+            if m:
+                correcta_texto = m.group(1).strip()
+                # Buscar coincidencia exacta entre las opciones ya registradas
+                for op in current_q["opciones"]:
+                    if op.strip() == correcta_texto or op.strip().endswith(correcta_texto):
+                        current_q["correcta"] = op
+                        break
+                if not current_q["correcta"]:
+                    current_q["correcta"] = correcta_texto
             continue
 
-        if is_bold and not starts_with_option:
-            if current_q and current_q["correcta"]:
+        # Nueva pregunta: negrita + no es opción
+        if is_bold and not starts_option:
+            if current_q and current_q["opciones"]:
                 questions.append(current_q)
             current_q = {"pregunta": text, "opciones": [], "correcta": None}
 
-        elif current_q is not None and starts_with_option:
+        # Opción A/B/C/D
+        elif current_q is not None and starts_option:
             current_q["opciones"].append(text)
-            if is_bold:
+            # Detectar correcta por negrita (solo si no hay línea explícita aún)
+            if is_bold and not current_q["correcta"]:
                 current_q["correcta"] = text
 
-    if current_q and current_q["correcta"]:
+    # Guardar la última pregunta
+    if current_q and current_q["opciones"]:
         questions.append(current_q)
+
+    # Ordenar opciones A → B → C → D en cada pregunta
+    def sort_key(op):
+        m = re.match(r'^([A-D])[.\s]', op)
+        return m.group(1) if m else op
+
+    for q in questions:
+        q["opciones"] = sorted(q["opciones"], key=sort_key)
+
+    # Filtrar preguntas sin respuesta correcta identificada
+    questions = [q for q in questions if q["correcta"]]
 
     return questions
