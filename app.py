@@ -5,7 +5,8 @@ from parser import parse_exam
 st.set_page_config(page_title="Examen ASIR", page_icon="📝", layout="centered")
 st.title("📝 Práctica de examen")
 
-# --- Subida del archivo ---
+LIMITE = 50
+
 uploaded = st.file_uploader("Sube tu archivo Word (.docx)", type="docx")
 
 if uploaded:
@@ -15,48 +16,52 @@ if uploaded:
         st.error("No se encontraron preguntas. Revisa el formato del Word.")
         st.stop()
 
-    total = len(questions)
-    st.sidebar.markdown(f"**Total de preguntas:** {total}")
-
     # Inicializar sesión
     if "questions" not in st.session_state:
-        shuffled = questions.copy()
-        random.shuffle(shuffled)
+        shuffled = random.sample(questions, min(LIMITE, len(questions)))
         st.session_state.questions = shuffled
         st.session_state.index = 0
         st.session_state.score = 0
+        st.session_state.incorrectas = 0
         st.session_state.answers = {}
         st.session_state.show_result = False
         st.session_state.feedback_idx = None
 
+    # Botón reiniciar
     if st.sidebar.button("🔄 Reiniciar examen"):
-        shuffled = questions.copy()
-        random.shuffle(shuffled)
+        shuffled = random.sample(questions, min(LIMITE, len(questions)))
         st.session_state.questions = shuffled
         st.session_state.index = 0
         st.session_state.score = 0
+        st.session_state.incorrectas = 0
         st.session_state.answers = {}
         st.session_state.show_result = False
         st.session_state.feedback_idx = None
         st.rerun()
 
     q_list = st.session_state.questions
+    total = len(q_list)
     idx = st.session_state.index
 
-    # --- Barra de progreso ---
-    st.progress(idx / total)
-    st.caption(f"Pregunta {min(idx + 1, total)} de {total}  |  Correctas: {st.session_state.score}")
+    st.sidebar.markdown(f"**Total preguntas en el banco:** {len(questions)}")
+    st.sidebar.markdown(f"**Preguntas en este examen:** {total}")
 
+    # Barra de progreso y contador
+    st.progress(idx / total)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pregunta", f"{min(idx + 1, total)} / {total}")
+    col2.metric("✅ Correctas", st.session_state.score)
+    col3.metric("❌ Incorrectas", st.session_state.incorrectas)
+
+    # --- Pregunta activa ---
     if idx < total and not st.session_state.show_result:
         q = q_list[idx]
         st.subheader(q["pregunta"])
 
-        # Mezclar opciones con seed fija
-        opciones = q["opciones"].copy()
-        rng = random.Random(q["pregunta"])
-        rng.shuffle(opciones)
+        # Las opciones vienen ordenadas A,B,C,D del parser — NO mezclar
+        opciones = q["opciones"]
 
-        # --- Modo feedback: mostrar resultado tras confirmar ---
+        # MODO FEEDBACK: mostrar resultado tras confirmar
         if st.session_state.feedback_idx == idx:
             eleccion = st.session_state.answers[idx]
             correcta = q["correcta"]
@@ -66,11 +71,11 @@ if uploaded:
             else:
                 st.error("❌ Incorrecto")
 
-            st.markdown("**Opciones:**")
+            # Mostrar opciones con colores, sin radio
             for op in opciones:
                 if op == correcta:
                     st.success(f"✅ {op}")
-                elif op == eleccion and eleccion != correcta:
+                elif op == eleccion:
                     st.error(f"❌ {op}  ← Tu respuesta")
                 else:
                     st.write(f"　{op}")
@@ -82,7 +87,7 @@ if uploaded:
                     st.session_state.show_result = True
                 st.rerun()
 
-        # --- Modo normal: elegir respuesta ---
+        # MODO NORMAL: elegir respuesta
         else:
             eleccion = st.radio("Elige una opción:", opciones, key=f"q_{idx}", index=None)
 
@@ -93,12 +98,15 @@ if uploaded:
 
                 if eleccion == correcta:
                     st.session_state.score += 1
+                else:
+                    st.session_state.incorrectas += 1
 
                 st.rerun()
 
+    # --- Resultados finales ---
     elif st.session_state.show_result or idx >= total:
-        # --- Resultados finales ---
         score = st.session_state.score
+        incorrectas = st.session_state.incorrectas
         pct = round(score / total * 100)
 
         if pct >= 70:
@@ -108,7 +116,12 @@ if uploaded:
             st.error(f"## ❌ Suspenso — {score}/{total} ({pct}%)")
             st.info("Revisa las preguntas incorrectas abajo y vuelve a intentarlo 💪")
 
-        # --- Repaso de respuestas ---
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total", total)
+        col2.metric("✅ Correctas", score)
+        col3.metric("❌ Incorrectas", incorrectas)
+
+        # Repaso
         st.divider()
         tab1, tab2 = st.tabs(["📋 Todas las respuestas", "❌ Solo errores"])
 
@@ -130,7 +143,7 @@ if uploaded:
             errores = [(i, q) for i, q in enumerate(q_list)
                        if st.session_state.answers.get(i) != q["correcta"]]
             if not errores:
-                st.success("¡No tienes ningún error! 🎉")
+                st.success("¡Sin errores! 🎉")
             else:
                 st.caption(f"{len(errores)} preguntas incorrectas")
                 for i, q in errores:
