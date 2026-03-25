@@ -1,50 +1,62 @@
 from docx import Document
+import re
 
 def parse_exam(file):
     doc = Document(file)
-    # Filtrar párrafos vacíos
-    paragraphs = [p for p in doc.paragraphs if p.text.strip()]
+
+    # Aplanar el documento en líneas individuales, dividiendo párrafos
+    # que mezclan varias opciones o tienen saltos de línea internos
+    lines = []  # lista de (texto, is_bold)
+
+    for para in doc.paragraphs:
+        raw = para.text.strip()
+        if not raw:
+            continue
+
+        is_bold = any(r.bold for r in para.runs if r.text.strip())
+
+        # Dividir por saltos de línea internos
+        parts = raw.split('\n')
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            # Subdividir si hay varias opciones en la misma línea: "A. texto B. texto"
+            subparts = re.split(r'(?<!\A)(?=[A-D]\. )', part)
+            for sp in subparts:
+                sp = sp.strip()
+                if sp:
+                    lines.append((sp, is_bold))
+
+    # Parsear las líneas
     questions = []
+    current_q = None
 
-    for i, para in enumerate(paragraphs):
-        text = para.text.strip()
+    for text, is_bold in lines:
+        starts_with_option = bool(re.match(r'^[A-Da-d][.\s]', text))
+        is_skip = text.startswith("Pregunta ") and "Respuesta" in text
+        is_unit = text.lower().startswith("unidad ")
 
-        # Usar "Pregunta X Respuesta" como ancla
-        if not (text.startswith("Pregunta ") and "Respuesta" in text):
+        if is_unit:
             continue
 
-        # El párrafo anterior es el enunciado de la pregunta
-        if i == 0:
-            continue
-        enunciado = paragraphs[i - 1].text.strip()
-
-        # Ignorar si el enunciado es un encabezado de unidad
-        if enunciado.lower().startswith("unidad "):
+        if is_skip:
+            if current_q and current_q["correcta"]:
+                questions.append(current_q)
+            current_q = None
             continue
 
-        # Recoger las opciones A/B/C/D hasta la siguiente ancla
-        opciones = []
-        correcta = None
-        j = i + 1
-        while j < len(paragraphs):
-            next_text = paragraphs[j].text.strip()
-            # Parar si encontramos la siguiente pregunta
-            if next_text.startswith("Pregunta ") and "Respuesta" in next_text:
-                break
-            # Es una opción si empieza por A. B. C. D.
-            if next_text[:2].upper() in ["A.", "B.", "C.", "D.", "A ", "B ", "C ", "D "]:
-                is_bold = any(run.bold for run in paragraphs[j].runs if run.text.strip())
-                opciones.append(next_text)
-                if is_bold:
-                    correcta = next_text
-            j += 1
+        if is_bold and not starts_with_option:
+            if current_q and current_q["correcta"]:
+                questions.append(current_q)
+            current_q = {"pregunta": text, "opciones": [], "correcta": None}
 
-        # Solo añadir si tiene opciones y respuesta correcta marcada
-        if opciones and correcta:
-            questions.append({
-                "pregunta": enunciado,
-                "opciones": opciones,
-                "correcta": correcta
-            })
+        elif current_q is not None and starts_with_option:
+            current_q["opciones"].append(text)
+            if is_bold:
+                current_q["correcta"] = text
+
+    if current_q and current_q["correcta"]:
+        questions.append(current_q)
 
     return questions
