@@ -1,31 +1,50 @@
 from docx import Document
 
-
 def parse_exam(file):
     doc = Document(file)
+    # Filtrar párrafos vacíos
+    paragraphs = [p for p in doc.paragraphs if p.text.strip()]
     questions = []
-    current_q = None
 
-    for para in doc.paragraphs:
+    for i, para in enumerate(paragraphs):
         text = para.text.strip()
-        if not text:
+
+        # Usar "Pregunta X Respuesta" como ancla
+        if not (text.startswith("Pregunta ") and "Respuesta" in text):
             continue
 
-        is_bold = any(run.bold for run in para.runs if run.text.strip())
+        # El párrafo anterior es el enunciado de la pregunta
+        if i == 0:
+            continue
+        enunciado = paragraphs[i - 1].text.strip()
 
-        # Detectar pregunta (empieza con número)
-        if para.text and para.text[0].isdigit():
-            if current_q and current_q["correcta"]:
-                questions.append(current_q)
-            current_q = {"pregunta": text, "opciones": [], "correcta": None}
+        # Ignorar si el enunciado es un encabezado de unidad
+        if enunciado.lower().startswith("unidad "):
+            continue
 
-        # Detectar opción (empieza con A, B, C o D)
-        elif current_q and text and text[0].upper() in "ABCD":
-            current_q["opciones"].append(text)
-            if is_bold:
-                current_q["correcta"] = text
+        # Recoger las opciones A/B/C/D hasta la siguiente ancla
+        opciones = []
+        correcta = None
+        j = i + 1
+        while j < len(paragraphs):
+            next_text = paragraphs[j].text.strip()
+            # Parar si encontramos la siguiente pregunta
+            if next_text.startswith("Pregunta ") and "Respuesta" in next_text:
+                break
+            # Es una opción si empieza por A. B. C. D.
+            if next_text[:2].upper() in ["A.", "B.", "C.", "D.", "A ", "B ", "C ", "D "]:
+                is_bold = any(run.bold for run in paragraphs[j].runs if run.text.strip())
+                opciones.append(next_text)
+                if is_bold:
+                    correcta = next_text
+            j += 1
 
-    if current_q and current_q["correcta"]:
-        questions.append(current_q)
+        # Solo añadir si tiene opciones y respuesta correcta marcada
+        if opciones and correcta:
+            questions.append({
+                "pregunta": enunciado,
+                "opciones": opciones,
+                "correcta": correcta
+            })
 
     return questions
