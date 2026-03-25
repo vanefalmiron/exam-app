@@ -2,7 +2,7 @@ import streamlit as st
 import random
 from parser import parse_exam
 
-st.set_page_config(page_title="Examen", page_icon="📝")
+st.set_page_config(page_title="Examen ASIR", page_icon="📝", layout="centered")
 st.title("📝 Práctica de examen")
 
 # --- Subida del archivo ---
@@ -15,66 +15,131 @@ if uploaded:
         st.error("No se encontraron preguntas. Revisa el formato del Word.")
         st.stop()
 
+    total = len(questions)
+    st.sidebar.markdown(f"**Total de preguntas:** {total}")
+
     # Inicializar sesión
-    if "questions" not in st.session_state or st.sidebar.button("🔄 Reiniciar examen"):
+    if "questions" not in st.session_state:
         shuffled = questions.copy()
         random.shuffle(shuffled)
         st.session_state.questions = shuffled
         st.session_state.index = 0
         st.session_state.score = 0
         st.session_state.answers = {}
+        st.session_state.show_result = False
+        st.session_state.feedback_idx = None
+
+    if st.sidebar.button("🔄 Reiniciar examen"):
+        shuffled = questions.copy()
+        random.shuffle(shuffled)
+        st.session_state.questions = shuffled
+        st.session_state.index = 0
+        st.session_state.score = 0
+        st.session_state.answers = {}
+        st.session_state.show_result = False
+        st.session_state.feedback_idx = None
+        st.rerun()
 
     q_list = st.session_state.questions
     idx = st.session_state.index
-    total = len(q_list)
 
-    # --- Progreso ---
+    # --- Barra de progreso ---
     st.progress(idx / total)
-    st.caption(f"Pregunta {idx + 1} de {total}")
+    st.caption(f"Pregunta {min(idx + 1, total)} de {total}  |  Correctas: {st.session_state.score}")
 
-    if idx < total:
+    if idx < total and not st.session_state.show_result:
         q = q_list[idx]
         st.subheader(q["pregunta"])
 
+        # Mezclar opciones con seed fija
         opciones = q["opciones"].copy()
-        random.seed(q["pregunta"])  # seed fija para no mezclar en cada render
-        random.shuffle(opciones)
+        rng = random.Random(q["pregunta"])
+        rng.shuffle(opciones)
 
-        eleccion = st.radio("Elige una opción:", opciones, key=f"q_{idx}", index=None)
-
-        if st.button("Confirmar respuesta", disabled=eleccion is None):
+        # --- Modo feedback: mostrar resultado tras confirmar ---
+        if st.session_state.feedback_idx == idx:
+            eleccion = st.session_state.answers[idx]
             correcta = q["correcta"]
-            st.session_state.answers[idx] = eleccion
 
             if eleccion == correcta:
-                st.session_state.score += 1
                 st.success("✅ ¡Correcto!")
             else:
-                st.error(f"❌ Incorrecto. La respuesta era: **{correcta}**")
+                st.error("❌ Incorrecto")
 
-            st.session_state.index += 1
-            st.rerun()
+            st.markdown("**Opciones:**")
+            for op in opciones:
+                if op == correcta:
+                    st.success(f"✅ {op}")
+                elif op == eleccion and eleccion != correcta:
+                    st.error(f"❌ {op}  ← Tu respuesta")
+                else:
+                    st.write(f"　{op}")
 
-    else:
+            if st.button("➡️ Siguiente pregunta"):
+                st.session_state.feedback_idx = None
+                st.session_state.index += 1
+                if st.session_state.index >= total:
+                    st.session_state.show_result = True
+                st.rerun()
+
+        # --- Modo normal: elegir respuesta ---
+        else:
+            eleccion = st.radio("Elige una opción:", opciones, key=f"q_{idx}", index=None)
+
+            if st.button("✅ Confirmar respuesta", disabled=eleccion is None):
+                correcta = q["correcta"]
+                st.session_state.answers[idx] = eleccion
+                st.session_state.feedback_idx = idx
+
+                if eleccion == correcta:
+                    st.session_state.score += 1
+
+                st.rerun()
+
+    elif st.session_state.show_result or idx >= total:
         # --- Resultados finales ---
         score = st.session_state.score
         pct = round(score / total * 100)
-        st.balloons()
-        st.header(f"Resultado: {score}/{total} — {pct}%")
 
         if pct >= 70:
-            st.success("¡Aprobado! 🎉")
+            st.balloons()
+            st.success(f"## ✅ Aprobado — {score}/{total} ({pct}%)")
         else:
-            st.warning("Sigue practicando 💪")
+            st.error(f"## ❌ Suspenso — {score}/{total} ({pct}%)")
+            st.info("Revisa las preguntas incorrectas abajo y vuelve a intentarlo 💪")
 
-        # Repaso de errores
+        # --- Repaso de respuestas ---
         st.divider()
-        st.subheader("📋 Repaso de respuestas")
-        for i, q in enumerate(q_list):
-            with st.expander(q["pregunta"]):
-                st.write(f"✅ Correcta: **{q['correcta']}**")
+        tab1, tab2 = st.tabs(["📋 Todas las respuestas", "❌ Solo errores"])
+
+        with tab1:
+            for i, q in enumerate(q_list):
                 tu_resp = st.session_state.answers.get(i, "—")
-                if tu_resp == q["correcta"]:
-                    st.write(f"Tu respuesta: ✅ {tu_resp}")
-                else:
-                    st.write(f"Tu respuesta: ❌ {tu_resp}")
+                correcta = q["correcta"]
+                icono = "✅" if tu_resp == correcta else "❌"
+                with st.expander(f"{icono} {q['pregunta'][:80]}"):
+                    for op in q["opciones"]:
+                        if op == correcta:
+                            st.markdown(f"✅ **{op}** ← Respuesta correcta")
+                        elif op == tu_resp and tu_resp != correcta:
+                            st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
+                        else:
+                            st.markdown(f"　{op}")
+
+        with tab2:
+            errores = [(i, q) for i, q in enumerate(q_list)
+                       if st.session_state.answers.get(i) != q["correcta"]]
+            if not errores:
+                st.success("¡No tienes ningún error! 🎉")
+            else:
+                st.caption(f"{len(errores)} preguntas incorrectas")
+                for i, q in errores:
+                    tu_resp = st.session_state.answers.get(i, "—")
+                    with st.expander(f"❌ {q['pregunta'][:80]}"):
+                        for op in q["opciones"]:
+                            if op == q["correcta"]:
+                                st.markdown(f"✅ **{op}** ← Respuesta correcta")
+                            elif op == tu_resp:
+                                st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
+                            else:
+                                st.markdown(f"　{op}")
