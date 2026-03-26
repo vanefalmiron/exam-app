@@ -4,40 +4,57 @@ import re
 def parse_exam(file):
     doc = Document(file)
     MARKER_RE = re.compile(r'(Pregunta\s+\d+\s+Respuesta)')
+    OPTION_RE = re.compile(r'^[A-D][.\s]')
 
-    # Convertir el documento en tokens (texto, is_bold)
-    tokens = []
+    # Construir tokens con negrita correcta POR RUN, no por párrafo
+    tokens = []  # (texto, is_bold)
+
     for para in doc.paragraphs:
-        raw = para.text
-        if not raw.strip():
+        if not para.text.strip():
             continue
-        is_bold = any(r.bold for r in para.runs if r.text.strip())
 
-        parts = MARKER_RE.split(raw)
-        for part in parts:
-            part = part.strip()
-            if not part:
-                continue
-            for line in part.split('\n'):
-                line = line.strip()
-                if not line:
-                    continue
-                # Separar opciones pegadas en la misma línea ("A. xxx B. yyy")
-                subparts = re.split(r'(?<!\A)(?=[A-D]\. )', line)
-                for sp in subparts:
-                    sp = sp.strip()
-                    if sp:
-                        tokens.append((sp, is_bold))
+        # Reconstruir el texto respetando la negrita de cada run
+        # Primero separar el marcador "Pregunta X Respuesta" del resto
+        # trabajando directamente con los runs
+        run_chunks = []  # (texto, is_bold)
+        for run in para.runs:
+            if run.text:
+                run_chunks.append((run.text, bool(run.bold)))
+
+        # Unir chunks consecutivos con el mismo bold
+        merged = []
+        for text, bold in run_chunks:
+            if merged and merged[-1][1] == bold:
+                merged[-1] = (merged[-1][0] + text, bold)
+            else:
+                merged.append([text, bold])
+
+        # Ahora procesar cada chunk
+        for chunk_text, chunk_bold in merged:
+            # Separar por marcador
+            parts = MARKER_RE.split(chunk_text)
+            for part in parts:
+                # Separar por saltos de línea
+                for line in part.split('\n'):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Separar opciones pegadas en la misma línea
+                    subparts = re.split(r'(?<!\A)(?=[A-D]\. )', line)
+                    for sp in subparts:
+                        sp = sp.strip()
+                        if sp:
+                            tokens.append((sp, chunk_bold))
 
     # Parsear tokens
     questions = []
     current_q = None
 
     for text, is_bold in tokens:
-        starts_option  = bool(re.match(r'^[A-D][.\s]', text))
-        is_marker      = bool(re.match(r'^Pregunta\s+\d+\s+Respuesta$', text))
-        is_unit        = text.lower().startswith("unidad ")
-        is_correcta    = text.lower().startswith("respuesta correcta")
+        starts_option = bool(OPTION_RE.match(text))
+        is_marker     = bool(re.match(r'^Pregunta\s+\d+\s+Respuesta$', text))
+        is_unit       = text.lower().startswith("unidad ")
+        is_correcta   = text.lower().startswith("respuesta correcta")
 
         if is_unit or is_marker:
             continue
@@ -64,7 +81,6 @@ def parse_exam(file):
         # Opción A/B/C/D
         elif current_q is not None and starts_option:
             letra = text[0].upper()
-            # Ignorar si ya tenemos esa letra (evita duplicados)
             if letra in current_q["_letras"]:
                 continue
             current_q["_letras"].add(letra)
@@ -75,7 +91,7 @@ def parse_exam(file):
     if current_q and current_q["opciones"]:
         questions.append(current_q)
 
-    # Ordenar A → B → C → D y limpiar campo interno
+    # Ordenar A → B → C → D
     def sort_key(op):
         m = re.match(r'^([A-D])[.\s]', op)
         return m.group(1) if m else op
@@ -84,7 +100,4 @@ def parse_exam(file):
         q["opciones"] = sorted(q["opciones"], key=sort_key)
         del q["_letras"]
 
-    # Solo preguntas con respuesta correcta identificada
-    questions = [q for q in questions if q["correcta"]]
-
-    return questions
+    return [q for q in questions if q["correcta"]]
