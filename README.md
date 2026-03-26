@@ -164,7 +164,7 @@ Streamlit Cloud detecta el push y redespliega en segundos.
 
 | Métrica | Valor |
 |---|---|
-| Total preguntas detectadas | ~323 |
+| Total preguntas detectadas | ~329 |
 | Preguntas por sesión | 50 (aleatorias) |
 | Opciones por pregunta | 4 (A, B, C, D) |
 | Umbral de aprobado | 70% |
