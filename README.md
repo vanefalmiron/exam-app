@@ -1,4 +1,4 @@
-# 📝 Exam Practice App — ASIR
+# 📝 Exam Practice App 
 
 Aplicación web interactiva para practicar exámenes tipo test a partir de un archivo Word (`.docx`). Desarrollada en Python con Streamlit y desplegada en la nube de forma gratuita.
 
@@ -182,4 +182,4 @@ Este proyecto fue desarrollado con asistencia de **Claude (Anthropic)**, que ayu
 
 ---
 
-*Proyecto creado para la preparación del examen ASIR.*
+*Proyecto creado para la preparación de examen.*
