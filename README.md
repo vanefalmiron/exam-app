@@ -171,15 +171,4 @@ Streamlit Cloud detecta el push y redespliega en segundos.
 
 ---
 
-## 🤖 Desarrollo
-
-Este proyecto fue desarrollado con asistencia de **Claude (Anthropic)**, que ayudó en:
-- Diseño de la arquitectura del proyecto
-- Desarrollo del parser para leer archivos Word con negrita
-- Depuración de problemas de formato del documento (opciones duplicadas, negrita por run vs por párrafo, opciones mezcladas en un mismo bloque)
-- Desarrollo de la interfaz con Streamlit
-- Configuración del despliegue en Streamlit Cloud
-
----
-
-*Proyecto creado para la preparación de examen.*
+*Proyecto creado para la preparación de examen.* 🤖
