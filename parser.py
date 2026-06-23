@@ -6,7 +6,17 @@ OPTION_SPLIT_RE  = re.compile(r'(?<!\A)(?=[A-Z]\.\s)')
 
 # Patrones en el enunciado que indican cuántas respuestas hay que elegir
 ELIGE_N_RE = re.compile(
-    r'\(elige\s+(\w+)\)|\(selecciona\s+(\w+)\)|\(choose\s+(\w+)\)|select\s+(\w+)\s+answer',
+    r'\(elige\s+(\w+)\)'           # (Elige dos)
+    r'|\(selecciona\s+(\w+)\)'     # (Selecciona dos)
+    r'|\(choose\s+(\w+)\)'         # (Choose two)
+    r'|select\s+(\w+)\s+answer'    # select two answers
+    r'|elige\s+(\w+)\s+(?:respuestas?|opciones?)'   # elige dos respuestas
+    r'|selecciona\s+(\w+)\s+(?:respuestas?|opciones?)'
+    r'|elija\s+(\w+)\s+(?:respuestas?|opciones?)'
+    r'|choose\s+(\w+)\s+(?:answers?|options?)'
+    # Frases naturales: "qué dos archivos", "cuáles tres opciones", "which two"
+    r'|(?:qué|que|cuáles?|cuales?|which)\s+(\w+)\s+\w+'
+    r'|(\w+)\s+(?:archivos?|acciones?|opciones?|pasos?|métodos?|formas?|maneras?|archivos?|comandos?|servicios?|configuraciones?|medidas?|tareas?|elementos?)\s+(?:deberías?|debe|debería|should|would|necesitas?)',
     re.IGNORECASE
 )
 PALABRAS_NUM = {"dos": 2, "two": 2, "tres": 3, "three": 3, "cuatro": 4, "four": 4,
@@ -14,11 +24,13 @@ PALABRAS_NUM = {"dos": 2, "two": 2, "tres": 3, "three": 3, "cuatro": 4, "four": 
 
 def _num_respuestas_enunciado(texto):
     """Extrae el número de respuestas requeridas del enunciado, si se indica."""
-    m = ELIGE_N_RE.search(texto)
-    if not m:
-        return None
-    token = next(g for g in m.groups() if g is not None).lower()
-    return PALABRAS_NUM.get(token)
+    for m in ELIGE_N_RE.finditer(texto):
+        token = next((g for g in m.groups() if g is not None), None)
+        if token:
+            n = PALABRAS_NUM.get(token.lower())
+            if n:
+                return n
+    return None
 
 
 def _is_option(text, expected_letters):
