@@ -33,6 +33,10 @@ def _num_respuestas_enunciado(texto):
     return None
 
 
+def _looks_like_option_letter(text):
+    """True si el texto empieza con patrón 'Letra. ' (aunque no sea opción válida en secuencia)."""
+    return bool(OPTION_STRICT_RE.match(text)) and len(text) >= 5
+
 def _is_option(text, expected_letters):
     m = OPTION_STRICT_RE.match(text)
     if not m:
@@ -110,7 +114,10 @@ def parse_exam(file):
         letras_actuales = current_q["_letras"] if current_q else set()
         starts_option = _is_option(text, letras_actuales)
 
-        if is_bold and not starts_option:
+        # Un título de pregunta nunca empieza con "Letra. " aunque esté en negrita
+        es_titulo = is_bold and not starts_option and not _looks_like_option_letter(text)
+
+        if es_titulo:
             if current_q and current_q["opciones"]:
                 questions.append(current_q)
             # Detectar si el enunciado indica cuántas respuestas hay que elegir
