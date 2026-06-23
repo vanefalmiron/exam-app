@@ -1,154 +1,252 @@
-from docx import Document
-import re
+import streamlit as st
+import random
+from parser import parse_exam
 
-OPTION_STRICT_RE = re.compile(r'^([A-Z])\.\s+\S.+')
-OPTION_SPLIT_RE  = re.compile(r'(?<!\A)(?=[A-Z]\.\s)')
+st.set_page_config(page_title="Examen ASIR", page_icon="📝", layout="centered")
+st.title("📝 Práctica de examen")
 
-# Patrones en el enunciado que indican cuántas respuestas hay que elegir
-ELIGE_N_RE = re.compile(
-    r'\(elige\s+(\w+)\)|\(selecciona\s+(\w+)\)|\(choose\s+(\w+)\)|select\s+(\w+)\s+answer',
-    re.IGNORECASE
-)
-PALABRAS_NUM = {"dos": 2, "two": 2, "tres": 3, "three": 3, "cuatro": 4, "four": 4,
-                "cinco": 5, "five": 5, "2": 2, "3": 3, "4": 4, "5": 5}
+LIMITE = 50
 
-def _num_respuestas_enunciado(texto):
-    """Extrae el número de respuestas requeridas del enunciado, si se indica."""
-    m = ELIGE_N_RE.search(texto)
-    if not m:
-        return None
-    token = next(g for g in m.groups() if g is not None).lower()
-    return PALABRAS_NUM.get(token)
+def es_correcta(eleccion, q):
+    if q.get("multi"):
+        return sorted(eleccion) == sorted(q["correctas"])
+    else:
+        return eleccion == q["correcta"]
 
+def _init_exam(questions):
+    shuffled = random.sample(questions, min(LIMITE, len(questions)))
+    st.session_state.questions = shuffled
+    st.session_state.index = 0
+    st.session_state.score = 0
+    st.session_state.incorrectas = 0
+    st.session_state.answers = {}
+    st.session_state.show_result = False
+    st.session_state.feedback_idx = None
+    st.session_state.repaso_mode = False
+    st.session_state.repaso_list = []
+    st.session_state.repaso_index = 0
+    st.session_state.repaso_answers = {}
+    st.session_state.repaso_feedback_idx = None
+    st.session_state.repaso_done = False
 
-def _is_option(text, expected_letters):
-    m = OPTION_STRICT_RE.match(text)
-    if not m:
-        return False
-    letra = m.group(1)
-    if len(text) < 5:
-        return False
-    if not expected_letters and letra != 'A':
-        return False
-    if expected_letters:
-        next_expected = chr(ord(max(expected_letters)) + 1)
-        if letra not in (next_expected, 'A'):
-            return False
-    return True
+def render_opciones(q, prefix, is_multi):
+    opciones = q["opciones"]
+    n = q.get("n_correctas", len(q["correctas"]))
+    if is_multi:
+        seleccion = []
+        for op in opciones:
+            if st.checkbox(op, key=f"{prefix}_check_{op}"):
+                seleccion.append(op)
+        confirmar_disabled = len(seleccion) != n
+        if seleccion and confirmar_disabled:
+            st.caption(f"Selecciona exactamente {n} opciones (llevas {len(seleccion)})")
+        return seleccion, confirmar_disabled
+    else:
+        eleccion = st.radio("Elige una opción:", opciones, key=f"{prefix}_radio", index=None)
+        return eleccion, eleccion is None
 
-
-def parse_exam(file):
-    doc = Document(file)
-    MARKER_RE = re.compile(r'(Pregunta\s+\d+\s+Respuesta)')
-
-    tokens = []
-
-    for para in doc.paragraphs:
-        if not para.text.strip():
-            continue
-
-        run_chunks = []
-        for run in para.runs:
-            if run.text:
-                run_chunks.append((run.text, bool(run.bold)))
-
-        merged = []
-        for text, bold in run_chunks:
-            if merged and merged[-1][1] == bold:
-                merged[-1] = (merged[-1][0] + text, bold)
-            else:
-                merged.append([text, bold])
-
-        for chunk_text, chunk_bold in merged:
-            parts = MARKER_RE.split(chunk_text)
-            for part in parts:
-                for line in part.split('\n'):
-                    line = line.strip()
-                    if not line:
-                        continue
-                    subparts = OPTION_SPLIT_RE.split(line)
-                    for sp in subparts:
-                        sp = sp.strip()
-                        if sp:
-                            tokens.append((sp, chunk_bold))
-
-    questions = []
-    current_q = None
-
-    for text, is_bold in tokens:
-        is_marker   = bool(re.match(r'^Pregunta\s+\d+\s+Respuesta$', text))
-        is_unit     = text.lower().startswith("unidad ")
-        is_correcta = text.lower().startswith("respuesta correcta")
-
-        if is_unit or is_marker:
-            continue
-
-        if is_correcta and current_q:
-            m = re.search(r'[Rr]espuesta correcta[:\s]+(.+)', text)
-            if m:
-                correcta_texto = m.group(1).strip()
-                for op in current_q["opciones"]:
-                    if op.strip() == correcta_texto or op.strip().endswith(correcta_texto):
-                        current_q["correctas"].add(op)
-                        break
-                if not current_q["correctas"]:
-                    current_q["correctas"].add(correcta_texto)
-            continue
-
-        letras_actuales = current_q["_letras"] if current_q else set()
-        starts_option = _is_option(text, letras_actuales)
-
-        if is_bold and not starts_option:
-            if current_q and current_q["opciones"]:
-                questions.append(current_q)
-            # Detectar si el enunciado indica cuántas respuestas hay que elegir
-            n_requeridas = _num_respuestas_enunciado(text)
-            current_q = {
-                "pregunta": text,
-                "opciones": [],
-                "correctas": set(),
-                "_letras": set(),
-                "_n_requeridas": n_requeridas,   # None si no se especifica
-            }
-
-        elif current_q is not None and starts_option:
-            letra = text[0].upper()
-            if letra in current_q["_letras"]:
-                continue
-            current_q["_letras"].add(letra)
-            current_q["opciones"].append(text)
-            if is_bold:
-                current_q["correctas"].add(text)
-
-    if current_q and current_q["opciones"]:
-        questions.append(current_q)
-
-    def sort_key(op):
-        m = re.match(r'^([A-Z])[.\s]', op)
-        return m.group(1) if m else op
-
-    result = []
-    for q in questions:
-        q["opciones"] = sorted(q["opciones"], key=sort_key)
-        del q["_letras"]
-        q["correctas"] = sorted(q["correctas"], key=sort_key)
-        q["correcta"] = q["correctas"][0] if q["correctas"] else None
-
-        # multi = True si:
-        # (a) el enunciado lo indica explícitamente, o
-        # (b) hay más de una opción en negrita
-        n_req = q.pop("_n_requeridas", None)
-        if n_req and n_req > 1:
-            q["multi"] = True
-            q["n_correctas"] = n_req          # cuántas debe marcar el usuario
-        elif len(q["correctas"]) > 1:
-            q["multi"] = True
-            q["n_correctas"] = len(q["correctas"])
+def render_feedback(q, eleccion):
+    correctas = q["correctas"]
+    acierto = es_correcta(eleccion, q)
+    if acierto:
+        st.success("✅ ¡Correcto!")
+    else:
+        st.error("❌ Incorrecto")
+    for op in q["opciones"]:
+        es_c = op in correctas
+        es_e = op in eleccion if isinstance(eleccion, list) else op == eleccion
+        if es_c and es_e:
+            st.success(f"✅ {op}")
+        elif es_c:
+            st.success(f"✅ {op} ← Respuesta correcta")
+        elif es_e:
+            st.error(f"❌ {op}  ← Tu respuesta")
         else:
-            q["multi"] = False
-            q["n_correctas"] = 1
+            st.write(f"　{op}")
 
-        if q["correctas"]:
-            result.append(q)
+uploaded = st.file_uploader("Sube tu archivo Word (.docx)", type="docx")
 
-    return result
+if uploaded:
+    questions = parse_exam(uploaded)
+
+    if not questions:
+        st.error("No se encontraron preguntas. Revisa el formato del Word.")
+        st.stop()
+
+    if "questions" not in st.session_state:
+        _init_exam(questions)
+
+    if st.sidebar.button("🔄 Reiniciar examen"):
+        _init_exam(questions)
+        st.rerun()
+
+    q_list = st.session_state.questions
+    total = len(q_list)
+    idx = st.session_state.index
+
+    st.sidebar.markdown(f"**Total preguntas en el banco:** {len(questions)}")
+    st.sidebar.markdown(f"**Preguntas en este examen:** {total}")
+
+    # ─────────────────────────────────────────────
+    # MODO REPASO DE INCORRECTAS
+    # ─────────────────────────────────────────────
+    if st.session_state.repaso_mode:
+        repaso_list = st.session_state.repaso_list
+        r_total = len(repaso_list)
+        r_idx = st.session_state.repaso_index
+
+        st.info(f"🔁 Modo repaso — {r_total} preguntas incorrectas")
+
+        if st.session_state.repaso_done:
+            aciertos_repaso = sum(
+                1 for i, q in enumerate(repaso_list)
+                if es_correcta(st.session_state.repaso_answers.get(i, [] if q.get("multi") else ""), q)
+            )
+            pct = round(aciertos_repaso / r_total * 100)
+            if pct >= 70:
+                st.success(f"## ✅ Repaso completado — {aciertos_repaso}/{r_total} ({pct}%)")
+            else:
+                st.warning(f"## 🔁 Repaso completado — {aciertos_repaso}/{r_total} ({pct}%)")
+
+            col1, col2 = st.columns(2)
+            if col1.button("🔄 Repetir repaso"):
+                st.session_state.repaso_index = 0
+                st.session_state.repaso_answers = {}
+                st.session_state.repaso_feedback_idx = None
+                st.session_state.repaso_done = False
+                st.rerun()
+            if col2.button("🏠 Volver al inicio"):
+                _init_exam(questions)
+                st.rerun()
+
+        elif r_idx < r_total:
+            q = repaso_list[r_idx]
+            is_multi = q.get("multi", False)
+
+            st.progress(r_idx / r_total)
+            col1, col2 = st.columns(2)
+            col1.metric("Pregunta", f"{r_idx + 1} / {r_total}")
+            col2.metric("Tipo", f"☝️ {q.get('n_correctas',1)} respuesta(s)")
+
+            st.subheader(q["pregunta"])
+            if is_multi:
+                st.caption(f"⚠️ Selecciona las {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
+
+            if st.session_state.repaso_feedback_idx == r_idx:
+                render_feedback(q, st.session_state.repaso_answers[r_idx])
+                if st.button("➡️ Siguiente", key="repaso_next"):
+                    st.session_state.repaso_feedback_idx = None
+                    st.session_state.repaso_index += 1
+                    if st.session_state.repaso_index >= r_total:
+                        st.session_state.repaso_done = True
+                    st.rerun()
+            else:
+                eleccion_actual, confirmar_disabled = render_opciones(q, f"repaso_{r_idx}", is_multi)
+                if st.button("✅ Confirmar", disabled=confirmar_disabled, key="repaso_confirmar"):
+                    st.session_state.repaso_answers[r_idx] = eleccion_actual
+                    st.session_state.repaso_feedback_idx = r_idx
+                    st.rerun()
+
+    # ─────────────────────────────────────────────
+    # EXAMEN NORMAL
+    # ─────────────────────────────────────────────
+    elif idx < total and not st.session_state.show_result:
+        q = q_list[idx]
+        is_multi = q.get("multi", False)
+
+        st.progress(idx / total)
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Pregunta", f"{min(idx + 1, total)} / {total}")
+        col2.metric("✅ Correctas", st.session_state.score)
+        col3.metric("❌ Incorrectas", st.session_state.incorrectas)
+
+        st.subheader(q["pregunta"])
+        if is_multi:
+            st.caption(f"⚠️ Selecciona las {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
+
+        if st.session_state.feedback_idx == idx:
+            render_feedback(q, st.session_state.answers[idx])
+            if st.button("➡️ Siguiente pregunta"):
+                st.session_state.feedback_idx = None
+                st.session_state.index += 1
+                if st.session_state.index >= total:
+                    st.session_state.show_result = True
+                st.rerun()
+        else:
+            eleccion_actual, confirmar_disabled = render_opciones(q, f"q_{idx}", is_multi)
+            if st.button("✅ Confirmar respuesta", disabled=confirmar_disabled):
+                st.session_state.answers[idx] = eleccion_actual
+                st.session_state.feedback_idx = idx
+                if es_correcta(eleccion_actual, q):
+                    st.session_state.score += 1
+                else:
+                    st.session_state.incorrectas += 1
+                st.rerun()
+
+    # ─────────────────────────────────────────────
+    # RESULTADOS FINALES
+    # ─────────────────────────────────────────────
+    elif st.session_state.show_result or idx >= total:
+        score = st.session_state.score
+        incorrectas_count = st.session_state.incorrectas
+        pct = round(score / total * 100)
+
+        if pct >= 70:
+            st.balloons()
+            st.success(f"## ✅ Aprobado — {score}/{total} ({pct}%)")
+        else:
+            st.error(f"## ❌ Suspenso — {score}/{total} ({pct}%)")
+            st.info("Revisa las preguntas incorrectas abajo y vuelve a intentarlo 💪")
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total", total)
+        col2.metric("✅ Correctas", score)
+        col3.metric("❌ Incorrectas", incorrectas_count)
+
+        errores = [(i, q) for i, q in enumerate(q_list)
+                   if not es_correcta(st.session_state.answers.get(i, [] if q.get("multi") else ""), q)]
+
+        if errores:
+            st.divider()
+            if st.button(f"🔁 Repasar {len(errores)} preguntas incorrectas", type="primary"):
+                st.session_state.repaso_mode = True
+                st.session_state.repaso_list = [q for _, q in errores]
+                st.session_state.repaso_index = 0
+                st.session_state.repaso_answers = {}
+                st.session_state.repaso_feedback_idx = None
+                st.session_state.repaso_done = False
+                st.rerun()
+
+        st.divider()
+        tab1, tab2 = st.tabs(["📋 Todas las respuestas", "❌ Solo errores"])
+
+        def render_revision(i, q):
+            tu_resp = st.session_state.answers.get(i, [] if q.get("multi") else "—")
+            acierto = es_correcta(tu_resp, q)
+            icono = "✅" if acierto else "❌"
+            with st.expander(f"{icono} {q['pregunta'][:80]}"):
+                if q.get("multi"):
+                    st.caption(f"Pregunta de {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
+                for op in q["opciones"]:
+                    es_c = op in q["correctas"]
+                    es_e = op in tu_resp if isinstance(tu_resp, list) else op == tu_resp
+                    if es_c and es_e:
+                        st.markdown(f"✅ **{op}** ← Correcto")
+                    elif es_c:
+                        st.markdown(f"✅ **{op}** ← Respuesta correcta")
+                    elif es_e:
+                        st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
+                    else:
+                        st.markdown(f"　{op}")
+
+        with tab1:
+            for i, q in enumerate(q_list):
+                render_revision(i, q)
+
+        with tab2:
+            if not errores:
+                st.success("¡Sin errores! 🎉")
+            else:
+                st.caption(f"{len(errores)} preguntas incorrectas")
+                for i, q in errores:
+                    render_revision(i, q)
