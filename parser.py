@@ -1,36 +1,37 @@
 from docx import Document
 import re
 
-# Opciones REALES: "A. texto", "B. texto"... pero NO "E. UU." ni abreviaturas
-# Requisitos:
-#   - Empieza con letra mayúscula + punto + espacio + al menos 2 chars
-#   - La letra debe ser la siguiente esperada en la secuencia (A→B→C...)
-#     o ser A (inicio de bloque de opciones)
 OPTION_STRICT_RE = re.compile(r'^([A-Z])\.\s+\S.+')
+OPTION_SPLIT_RE  = re.compile(r'(?<!\A)(?=[A-Z]\.\s)')
 
-# Para el split interno de línea (opciones pegadas en el mismo párrafo)
-OPTION_SPLIT_RE = re.compile(r'(?<!\A)(?=[A-Z]\.\s)')
+# Patrones en el enunciado que indican cuántas respuestas hay que elegir
+ELIGE_N_RE = re.compile(
+    r'\(elige\s+(\w+)\)|\(selecciona\s+(\w+)\)|\(choose\s+(\w+)\)|select\s+(\w+)\s+answer',
+    re.IGNORECASE
+)
+PALABRAS_NUM = {"dos": 2, "two": 2, "tres": 3, "three": 3, "cuatro": 4, "four": 4,
+                "cinco": 5, "five": 5, "2": 2, "3": 3, "4": 4, "5": 5}
+
+def _num_respuestas_enunciado(texto):
+    """Extrae el número de respuestas requeridas del enunciado, si se indica."""
+    m = ELIGE_N_RE.search(texto)
+    if not m:
+        return None
+    token = next(g for g in m.groups() if g is not None).lower()
+    return PALABRAS_NUM.get(token)
+
 
 def _is_option(text, expected_letters):
-    """
-    Devuelve True solo si el texto parece una opción de respuesta legítima:
-    - Cumple el patrón estricto (Letra. texto con contenido)
-    - La letra es la siguiente esperada O es 'A' (reinicio)
-    - El texto tiene al menos 5 caracteres (evita "E. U" como opción)
-    """
     m = OPTION_STRICT_RE.match(text)
     if not m:
         return False
     letra = m.group(1)
     if len(text) < 5:
         return False
-    # Si no hay opciones todavía, solo aceptamos A
     if not expected_letters and letra != 'A':
         return False
-    # La siguiente letra esperada es la inmediatamente posterior a la última
     if expected_letters:
         next_expected = chr(ord(max(expected_letters)) + 1)
-        # Aceptar si es la siguiente en secuencia O si es A (reinicio tras nueva pregunta)
         if letra not in (next_expected, 'A'):
             return False
     return True
@@ -40,7 +41,7 @@ def parse_exam(file):
     doc = Document(file)
     MARKER_RE = re.compile(r'(Pregunta\s+\d+\s+Respuesta)')
 
-    tokens = []  # (texto, is_bold)
+    tokens = []
 
     for para in doc.paragraphs:
         if not para.text.strip():
@@ -65,7 +66,6 @@ def parse_exam(file):
                     line = line.strip()
                     if not line:
                         continue
-                    # Split solo cuando hay patrón claro de opciones contiguas
                     subparts = OPTION_SPLIT_RE.split(line)
                     for sp in subparts:
                         sp = sp.strip()
@@ -83,7 +83,6 @@ def parse_exam(file):
         if is_unit or is_marker:
             continue
 
-        # Línea explícita "Respuesta correcta: X. texto"
         if is_correcta and current_q:
             m = re.search(r'[Rr]espuesta correcta[:\s]+(.+)', text)
             if m:
@@ -96,27 +95,28 @@ def parse_exam(file):
                     current_q["correctas"].add(correcta_texto)
             continue
 
-        # Comprobamos si es opción con el nuevo validador estricto
         letras_actuales = current_q["_letras"] if current_q else set()
         starts_option = _is_option(text, letras_actuales)
 
-        # Nueva pregunta: negrita y no es opción
         if is_bold and not starts_option:
             if current_q and current_q["opciones"]:
                 questions.append(current_q)
-            current_q = {"pregunta": text, "opciones": [], "correctas": set(), "_letras": set()}
+            # Detectar si el enunciado indica cuántas respuestas hay que elegir
+            n_requeridas = _num_respuestas_enunciado(text)
+            current_q = {
+                "pregunta": text,
+                "opciones": [],
+                "correctas": set(),
+                "_letras": set(),
+                "_n_requeridas": n_requeridas,   # None si no se especifica
+            }
 
-        # Opción válida
         elif current_q is not None and starts_option:
             letra = text[0].upper()
             if letra in current_q["_letras"]:
                 continue
             current_q["_letras"].add(letra)
             current_q["opciones"].append(text)
-            if is_bold and not current_q["correctas"]:
-                # Solo marcar como correcta la primera en negrita
-                # (para no confundir enunciados en negrita con respuestas)
-                pass
             if is_bold:
                 current_q["correctas"].add(text)
 
@@ -133,7 +133,21 @@ def parse_exam(file):
         del q["_letras"]
         q["correctas"] = sorted(q["correctas"], key=sort_key)
         q["correcta"] = q["correctas"][0] if q["correctas"] else None
-        q["multi"] = len(q["correctas"]) > 1
+
+        # multi = True si:
+        # (a) el enunciado lo indica explícitamente, o
+        # (b) hay más de una opción en negrita
+        n_req = q.pop("_n_requeridas", None)
+        if n_req and n_req > 1:
+            q["multi"] = True
+            q["n_correctas"] = n_req          # cuántas debe marcar el usuario
+        elif len(q["correctas"]) > 1:
+            q["multi"] = True
+            q["n_correctas"] = len(q["correctas"])
+        else:
+            q["multi"] = False
+            q["n_correctas"] = 1
+
         if q["correctas"]:
             result.append(q)
 
