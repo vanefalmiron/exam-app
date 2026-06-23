@@ -4,26 +4,23 @@ import re
 OPTION_STRICT_RE = re.compile(r'^([A-Z])\.\s+\S.+')
 OPTION_SPLIT_RE  = re.compile(r'(?<!\A)(?=[A-Z]\.\s)')
 
-# Patrones en el enunciado que indican cuántas respuestas hay que elegir
 ELIGE_N_RE = re.compile(
-    r'\(elige\s+(\w+)\)'           # (Elige dos)
-    r'|\(selecciona\s+(\w+)\)'     # (Selecciona dos)
-    r'|\(choose\s+(\w+)\)'         # (Choose two)
-    r'|select\s+(\w+)\s+answer'    # select two answers
-    r'|elige\s+(\w+)\s+(?:respuestas?|opciones?)'   # elige dos respuestas
+    r'\(elige\s+(\w+)\)'
+    r'|\(selecciona\s+(\w+)\)'
+    r'|\(choose\s+(\w+)\)'
+    r'|select\s+(\w+)\s+answer'
+    r'|elige\s+(\w+)\s+(?:respuestas?|opciones?)'
     r'|selecciona\s+(\w+)\s+(?:respuestas?|opciones?)'
     r'|elija\s+(\w+)\s+(?:respuestas?|opciones?)'
     r'|choose\s+(\w+)\s+(?:answers?|options?)'
-    # Frases naturales: "qué dos archivos", "cuáles tres opciones", "which two"
     r'|(?:qué|que|cuáles?|cuales?|which)\s+(\w+)\s+\w+'
-    r'|(\w+)\s+(?:archivos?|acciones?|opciones?|pasos?|métodos?|formas?|maneras?|archivos?|comandos?|servicios?|configuraciones?|medidas?|tareas?|elementos?)\s+(?:deberías?|debe|debería|should|would|necesitas?)',
+    r'|(\w+)\s+(?:archivos?|acciones?|opciones?|pasos?|métodos?|formas?|maneras?|comandos?|servicios?|configuraciones?|medidas?|tareas?|elementos?)\s+(?:deberías?|debe|debería|should|would|necesitas?)',
     re.IGNORECASE
 )
 PALABRAS_NUM = {"dos": 2, "two": 2, "tres": 3, "three": 3, "cuatro": 4, "four": 4,
                 "cinco": 5, "five": 5, "2": 2, "3": 3, "4": 4, "5": 5}
 
 def _num_respuestas_enunciado(texto):
-    """Extrae el número de respuestas requeridas del enunciado, si se indica."""
     for m in ELIGE_N_RE.finditer(texto):
         token = next((g for g in m.groups() if g is not None), None)
         if token:
@@ -32,9 +29,7 @@ def _num_respuestas_enunciado(texto):
                 return n
     return None
 
-
 def _looks_like_option_letter(text):
-    """True si el texto empieza con patrón 'Letra. ' (aunque no sea opción válida en secuencia)."""
     return bool(OPTION_STRICT_RE.match(text)) and len(text) >= 5
 
 def _is_option(text, expected_letters):
@@ -114,20 +109,33 @@ def parse_exam(file):
         letras_actuales = current_q["_letras"] if current_q else set()
         starts_option = _is_option(text, letras_actuales)
 
-        # Un título de pregunta nunca empieza con "Letra. " aunque esté en negrita
-        es_titulo = is_bold and not starts_option and not _looks_like_option_letter(text)
+        # Caso: negrita con patrón "Letra. texto" pero NO es opción válida en secuencia
+        # y todavía no hay opciones → es un fragmento del enunciado, concatenar
+        es_fragmento_enunciado = (
+            is_bold
+            and not starts_option
+            and _looks_like_option_letter(text)
+            and current_q is not None
+            and not current_q["opciones"]
+        )
 
-        if es_titulo:
+        if es_fragmento_enunciado:
+            current_q["pregunta"] += " " + text
+            n = _num_respuestas_enunciado(text)
+            if n and not current_q.get("_n_requeridas"):
+                current_q["_n_requeridas"] = n
+
+        elif is_bold and not starts_option and not _looks_like_option_letter(text):
+            # Nuevo título de pregunta real
             if current_q and current_q["opciones"]:
                 questions.append(current_q)
-            # Detectar si el enunciado indica cuántas respuestas hay que elegir
             n_requeridas = _num_respuestas_enunciado(text)
             current_q = {
                 "pregunta": text,
                 "opciones": [],
                 "correctas": set(),
                 "_letras": set(),
-                "_n_requeridas": n_requeridas,   # None si no se especifica
+                "_n_requeridas": n_requeridas,
             }
 
         elif current_q is not None and starts_option:
@@ -153,13 +161,10 @@ def parse_exam(file):
         q["correctas"] = sorted(q["correctas"], key=sort_key)
         q["correcta"] = q["correctas"][0] if q["correctas"] else None
 
-        # multi = True si:
-        # (a) el enunciado lo indica explícitamente, o
-        # (b) hay más de una opción en negrita
         n_req = q.pop("_n_requeridas", None)
         if n_req and n_req > 1:
             q["multi"] = True
-            q["n_correctas"] = n_req          # cuántas debe marcar el usuario
+            q["n_correctas"] = n_req
         elif len(q["correctas"]) > 1:
             q["multi"] = True
             q["n_correctas"] = len(q["correctas"])
