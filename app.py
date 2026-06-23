@@ -7,10 +7,7 @@ st.title("📝 Práctica de examen")
 
 LIMITE = 50
 
-uploaded = st.file_uploader("Sube tu archivo Word (.docx)", type="docx")
-
 def es_correcta(eleccion, q):
-    """Comprueba si la elección del usuario es correcta (soporta multi y single)."""
     if q.get("multi"):
         return sorted(eleccion) == sorted(q["correctas"])
     else:
@@ -31,6 +28,43 @@ def _init_exam(questions):
     st.session_state.repaso_answers = {}
     st.session_state.repaso_feedback_idx = None
     st.session_state.repaso_done = False
+
+def render_opciones(q, prefix, is_multi):
+    opciones = q["opciones"]
+    n = q.get("n_correctas", len(q["correctas"]))
+    if is_multi:
+        seleccion = []
+        for op in opciones:
+            if st.checkbox(op, key=f"{prefix}_check_{op}"):
+                seleccion.append(op)
+        confirmar_disabled = len(seleccion) != n
+        if seleccion and confirmar_disabled:
+            st.caption(f"Selecciona exactamente {n} opciones (llevas {len(seleccion)})")
+        return seleccion, confirmar_disabled
+    else:
+        eleccion = st.radio("Elige una opción:", opciones, key=f"{prefix}_radio", index=None)
+        return eleccion, eleccion is None
+
+def render_feedback(q, eleccion):
+    correctas = q["correctas"]
+    acierto = es_correcta(eleccion, q)
+    if acierto:
+        st.success("✅ ¡Correcto!")
+    else:
+        st.error("❌ Incorrecto")
+    for op in q["opciones"]:
+        es_c = op in correctas
+        es_e = op in eleccion if isinstance(eleccion, list) else op == eleccion
+        if es_c and es_e:
+            st.success(f"✅ {op}")
+        elif es_c:
+            st.success(f"✅ {op} ← Respuesta correcta")
+        elif es_e:
+            st.error(f"❌ {op}  ← Tu respuesta")
+        else:
+            st.write(f"　{op}")
+
+uploaded = st.file_uploader("Sube tu archivo Word (.docx)", type="docx")
 
 if uploaded:
     questions = parse_exam(uploaded)
@@ -64,7 +98,6 @@ if uploaded:
         st.info(f"🔁 Modo repaso — {r_total} preguntas incorrectas")
 
         if st.session_state.repaso_done:
-            # Resultados del repaso
             aciertos_repaso = sum(
                 1 for i, q in enumerate(repaso_list)
                 if es_correcta(st.session_state.repaso_answers.get(i, [] if q.get("multi") else ""), q)
@@ -88,63 +121,27 @@ if uploaded:
 
         elif r_idx < r_total:
             q = repaso_list[r_idx]
-            opciones = q["opciones"]
             is_multi = q.get("multi", False)
 
             st.progress(r_idx / r_total)
             col1, col2 = st.columns(2)
             col1.metric("Pregunta", f"{r_idx + 1} / {r_total}")
-            col2.metric("Tipo", "✌️ Múltiple" if is_multi else "☝️ Una respuesta")
+            col2.metric("Tipo", f"☝️ {q.get('n_correctas',1)} respuesta(s)")
 
             st.subheader(q["pregunta"])
             if is_multi:
-                st.caption(f"⚠️ Selecciona las {len(q['correctas'])} respuestas correctas")
+                st.caption(f"⚠️ Selecciona las {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
 
-            # MODO FEEDBACK REPASO
             if st.session_state.repaso_feedback_idx == r_idx:
-                eleccion = st.session_state.repaso_answers[r_idx]
-                correctas = q["correctas"]
-                acierto = es_correcta(eleccion, q)
-
-                if acierto:
-                    st.success("✅ ¡Correcto!")
-                else:
-                    st.error("❌ Incorrecto")
-
-                for op in opciones:
-                    es_c = op in correctas
-                    es_e = op in eleccion if isinstance(eleccion, list) else op == eleccion
-                    if es_c and es_e:
-                        st.success(f"✅ {op}")
-                    elif es_c:
-                        st.success(f"✅ {op} ← Respuesta correcta")
-                    elif es_e:
-                        st.error(f"❌ {op}  ← Tu respuesta")
-                    else:
-                        st.write(f"　{op}")
-
+                render_feedback(q, st.session_state.repaso_answers[r_idx])
                 if st.button("➡️ Siguiente", key="repaso_next"):
                     st.session_state.repaso_feedback_idx = None
                     st.session_state.repaso_index += 1
                     if st.session_state.repaso_index >= r_total:
                         st.session_state.repaso_done = True
                     st.rerun()
-
-            # MODO NORMAL REPASO
             else:
-                if is_multi:
-                    seleccion = []
-                    for op in opciones:
-                        if st.checkbox(op, key=f"repaso_check_{r_idx}_{op}"):
-                            seleccion.append(op)
-                    confirmar_disabled = len(seleccion) != len(q["correctas"])
-                    if confirmar_disabled and seleccion:
-                        st.caption(f"Selecciona exactamente {len(q['correctas'])} opciones (llevas {len(seleccion)})")
-                    eleccion_actual = seleccion
-                else:
-                    eleccion_actual = st.radio("Elige una opción:", opciones, key=f"repaso_q_{r_idx}", index=None)
-                    confirmar_disabled = eleccion_actual is None
-
+                eleccion_actual, confirmar_disabled = render_opciones(q, f"repaso_{r_idx}", is_multi)
                 if st.button("✅ Confirmar", disabled=confirmar_disabled, key="repaso_confirmar"):
                     st.session_state.repaso_answers[r_idx] = eleccion_actual
                     st.session_state.repaso_feedback_idx = r_idx
@@ -155,7 +152,6 @@ if uploaded:
     # ─────────────────────────────────────────────
     elif idx < total and not st.session_state.show_result:
         q = q_list[idx]
-        opciones = q["opciones"]
         is_multi = q.get("multi", False)
 
         st.progress(idx / total)
@@ -166,62 +162,25 @@ if uploaded:
 
         st.subheader(q["pregunta"])
         if is_multi:
-            st.caption(f"⚠️ Selecciona las {len(q['correctas'])} respuestas correctas")
+            st.caption(f"⚠️ Selecciona las {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
 
-        # MODO FEEDBACK
         if st.session_state.feedback_idx == idx:
-            eleccion = st.session_state.answers[idx]
-            correctas = q["correctas"]
-            acierto = es_correcta(eleccion, q)
-
-            if acierto:
-                st.success("✅ ¡Correcto!")
-            else:
-                st.error("❌ Incorrecto")
-
-            for op in opciones:
-                es_c = op in correctas
-                es_e = op in eleccion if isinstance(eleccion, list) else op == eleccion
-                if es_c and es_e:
-                    st.success(f"✅ {op}")
-                elif es_c:
-                    st.success(f"✅ {op} ← Respuesta correcta")
-                elif es_e:
-                    st.error(f"❌ {op}  ← Tu respuesta")
-                else:
-                    st.write(f"　{op}")
-
+            render_feedback(q, st.session_state.answers[idx])
             if st.button("➡️ Siguiente pregunta"):
                 st.session_state.feedback_idx = None
                 st.session_state.index += 1
                 if st.session_state.index >= total:
                     st.session_state.show_result = True
                 st.rerun()
-
-        # MODO NORMAL
         else:
-            if is_multi:
-                seleccion = []
-                for op in opciones:
-                    if st.checkbox(op, key=f"check_{idx}_{op}"):
-                        seleccion.append(op)
-                confirmar_disabled = len(seleccion) != len(q["correctas"])
-                if confirmar_disabled and seleccion:
-                    st.caption(f"Selecciona exactamente {len(q['correctas'])} opciones (llevas {len(seleccion)})")
-                eleccion_actual = seleccion
-            else:
-                eleccion_actual = st.radio("Elige una opción:", opciones, key=f"q_{idx}", index=None)
-                confirmar_disabled = eleccion_actual is None
-
+            eleccion_actual, confirmar_disabled = render_opciones(q, f"q_{idx}", is_multi)
             if st.button("✅ Confirmar respuesta", disabled=confirmar_disabled):
                 st.session_state.answers[idx] = eleccion_actual
                 st.session_state.feedback_idx = idx
-
                 if es_correcta(eleccion_actual, q):
                     st.session_state.score += 1
                 else:
                     st.session_state.incorrectas += 1
-
                 st.rerun()
 
     # ─────────────────────────────────────────────
@@ -244,7 +203,6 @@ if uploaded:
         col2.metric("✅ Correctas", score)
         col3.metric("❌ Incorrectas", incorrectas_count)
 
-        # Botón repaso
         errores = [(i, q) for i, q in enumerate(q_list)
                    if not es_correcta(st.session_state.answers.get(i, [] if q.get("multi") else ""), q)]
 
@@ -259,29 +217,31 @@ if uploaded:
                 st.session_state.repaso_done = False
                 st.rerun()
 
-        # Tabs de repaso en pantalla
         st.divider()
         tab1, tab2 = st.tabs(["📋 Todas las respuestas", "❌ Solo errores"])
 
+        def render_revision(i, q):
+            tu_resp = st.session_state.answers.get(i, [] if q.get("multi") else "—")
+            acierto = es_correcta(tu_resp, q)
+            icono = "✅" if acierto else "❌"
+            with st.expander(f"{icono} {q['pregunta'][:80]}"):
+                if q.get("multi"):
+                    st.caption(f"Pregunta de {q.get('n_correctas', len(q['correctas']))} respuestas correctas")
+                for op in q["opciones"]:
+                    es_c = op in q["correctas"]
+                    es_e = op in tu_resp if isinstance(tu_resp, list) else op == tu_resp
+                    if es_c and es_e:
+                        st.markdown(f"✅ **{op}** ← Correcto")
+                    elif es_c:
+                        st.markdown(f"✅ **{op}** ← Respuesta correcta")
+                    elif es_e:
+                        st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
+                    else:
+                        st.markdown(f"　{op}")
+
         with tab1:
             for i, q in enumerate(q_list):
-                tu_resp = st.session_state.answers.get(i, [] if q.get("multi") else "—")
-                acierto = es_correcta(tu_resp, q)
-                icono = "✅" if acierto else "❌"
-                with st.expander(f"{icono} {q['pregunta'][:80]}"):
-                    if q.get("multi"):
-                        st.caption("Pregunta de respuesta múltiple")
-                    for op in q["opciones"]:
-                        es_c = op in q["correctas"]
-                        es_e = op in tu_resp if isinstance(tu_resp, list) else op == tu_resp
-                        if es_c and es_e:
-                            st.markdown(f"✅ **{op}** ← Correcto")
-                        elif es_c:
-                            st.markdown(f"✅ **{op}** ← Respuesta correcta")
-                        elif es_e:
-                            st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
-                        else:
-                            st.markdown(f"　{op}")
+                render_revision(i, q)
 
         with tab2:
             if not errores:
@@ -289,18 +249,4 @@ if uploaded:
             else:
                 st.caption(f"{len(errores)} preguntas incorrectas")
                 for i, q in errores:
-                    tu_resp = st.session_state.answers.get(i, [] if q.get("multi") else "—")
-                    with st.expander(f"❌ {q['pregunta'][:80]}"):
-                        if q.get("multi"):
-                            st.caption("Pregunta de respuesta múltiple")
-                        for op in q["opciones"]:
-                            es_c = op in q["correctas"]
-                            es_e = op in tu_resp if isinstance(tu_resp, list) else op == tu_resp
-                            if es_c and es_e:
-                                st.markdown(f"✅ **{op}** ← Correcto")
-                            elif es_c:
-                                st.markdown(f"✅ **{op}** ← Respuesta correcta")
-                            elif es_e:
-                                st.markdown(f"❌ ~~{op}~~ ← Tu respuesta")
-                            else:
-                                st.markdown(f"　{op}")
+                    render_revision(i, q)
